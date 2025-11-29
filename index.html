@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UK Local Authority Boundary Visualiser</title>
+    
+    <!-- MapLibre GL JS -->
+    <script src="https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.css" rel="stylesheet" />
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Turf.js for client-side spatial ops (optional but good for bounds) -->
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        .sidebar {
+            z-index: 10;
+            max-height: 90vh;
+            transition: transform 0.3s ease-in-out;
+        }
+        /* Custom scrollbar for the dropdown */
+        select::-webkit-scrollbar {
+            width: 8px;
+        }
+        select::-webkit-scrollbar-track {
+            background: #f1f1f1; 
+        }
+        select::-webkit-scrollbar-thumb {
+            background: #888; 
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans overflow-hidden">
+
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Control Panel -->
+    <div class="sidebar absolute top-4 left-4 w-80 bg-white rounded-xl shadow-2xl flex flex-col p-5 border border-gray-200/50 backdrop-blur-sm bg-white/95">
+        
+        <h1 class="text-xl font-bold text-gray-800 mb-1">UK Boundaries</h1>
+        <p class="text-xs text-gray-500 mb-4">Data sourced dynamically from ONS Open Geography Portal</p>
+
+        <!-- Loading Indicator -->
+        <div id="loading-initial" class="flex items-center space-x-2 text-blue-600 text-sm font-medium mb-4 animate-pulse">
+            <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Fetching Local Authorities...</span>
+        </div>
+
+        <!-- Controls Form -->
+        <div id="controls" class="hidden space-y-4">
+            
+            <!-- Local Authority Dropdown -->
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-1">Local Authority</label>
+                <div class="relative">
+                    <select id="la-select" class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 bg-gray-50 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md border shadow-sm transition-colors">
+                        <option value="" disabled selected>Select a location...</option>
+                        <!-- Options populated via JS -->
+                    </select>
+                </div>
+            </div>
+
+            <!-- Boundary Type Dropdown -->
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-1">Boundary Type</label>
+                <select id="type-select" class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 bg-gray-50 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md border shadow-sm">
+                    <option value="lad">Local Authority District (LAD)</option>
+                    <option value="ward">Wards</option>
+                    <option value="lsoa">LSOA (Lower Super Output)</option>
+                    <option value="msoa">MSOA (Middle Super Output)</option>
+                </select>
+            </div>
+
+            <!-- Action Button -->
+            <button id="load-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-lg shadow-md transition-all transform hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
+                Load Boundaries
+            </button>
+
+            <!-- Status Message -->
+            <div id="status-msg" class="text-sm text-gray-600 min-h-[20px]"></div>
+        </div>
+
+        <!-- Legend -->
+        <div class="mt-6 pt-4 border-t border-gray-200">
+            <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Legend</h3>
+            <div class="flex items-center space-x-2 mb-1">
+                <span class="w-4 h-4 bg-blue-500/20 border-2 border-blue-600 rounded"></span>
+                <span class="text-xs text-gray-600">Selected Boundary</span>
+            </div>
+            <div class="flex items-center space-x-2">
+                <span class="w-4 h-4 border border-dashed border-gray-400 rounded"></span>
+                <span class="text-xs text-gray-600">Context (Map Tiles)</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Configuration ---
+        // Using "Generalised Clipped (BGC)" layers for performance (smaller file sizes than BFE)
+        // Note: URL indexes (/0) are standard for FeatureServers.
+        const APIs = {
+            // Local Authority Districts (May 2024)
+            LAD: "https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/Local_Authority_Districts_May_2024_Boundaries_UK_BGC/FeatureServer/0",
+            // Wards (May 2024)
+            WARD: "https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/Wards_May_2024_Boundaries_UK_BGC/FeatureServer/0",
+            // LSOA (Dec 2021) - Latest Census
+            LSOA: "https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/Lower_layer_Super_Output_Areas_December_2021_Boundaries_EW_BGC_V5/FeatureServer/0",
+            // MSOA (Dec 2021) - Latest Census
+            MSOA: "https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/Middle_Layer_Super_Output_Areas_December_2021_Boundaries_EW_BGC_V3/FeatureServer/0"
+        };
+
+        // --- State ---
+        let currentLADGeometry = null;
+
+        // --- Map Initialization ---
+        const map = new maplibregl.Map({
+            container: 'map',
+            // Free vector tile style (Carto Light)
+            style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+            center: [-1.2577, 51.7520], // Oxford coordinates
+            zoom: 6
+        });
+
+        map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+        map.on('load', () => {
+            initApp();
+        });
+
+        // --- App Logic ---
+
+        async function initApp() {
+            try {
+                // Fetch list of Local Authorities for dropdown
+                // We only need names and codes, not geometry (returnGeometry=false)
+                const queryUrl = `${APIs.LAD}/query?where=1=1&outFields=LAD24NM,LAD24CD&returnGeometry=false&orderByFields=LAD24NM&f=json`;
+                
+                const response = await fetch(queryUrl);
+                const data = await response.json();
+
+                if (data.features) {
+                    populateDropdown(data.features);
+                    document.getElementById('loading-initial').classList.add('hidden');
+                    document.getElementById('controls').classList.remove('hidden');
+                } else {
+                    throw new Error("No features found");
+                }
+            } catch (error) {
+                console.error("Init Error:", error);
+                document.getElementById('loading-initial').innerHTML = `<span class="text-red-500">Error loading data. Please refresh.</span>`;
+            }
+        }
+
+        function populateDropdown(features) {
+            const select = document.getElementById('la-select');
+            
+            // Filter distinct names just in case, though API distincts usually
+            features.forEach(feature => {
+                const name = feature.attributes.LAD24NM;
+                const code = feature.attributes.LAD24CD;
+                const option = document.createElement('option');
+                option.value = code;
+                option.textContent = name;
+                select.appendChild(option);
+            });
+            
+            // Set default to Oxford if exists (just for demo purposes)
+            const oxford = Array.from(select.options).find(opt => opt.text.includes('Oxford'));
+            if(oxford) select.value = oxford.value;
+        }
+
+        // --- Main Load Function ---
+        document.getElementById('load-btn').addEventListener('click', async () => {
+            const laCode = document.getElementById('la-select').value;
+            const laName = document.getElementById('la-select').options[document.getElementById('la-select').selectedIndex].text;
+            const type = document.getElementById('type-select').value;
+            const btn = document.getElementById('load-btn');
+            const status = document.getElementById('status-msg');
+
+            if (!laCode) return;
+
+            // UI State: Loading
+            btn.disabled = true;
+            btn.innerHTML = `<svg class="inline animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Loading...`;
+            status.textContent = `Fetching ${type.toUpperCase()} data for ${laName}...`;
+
+            try {
+                // 1. Always fetch the LAD Geometry first. 
+                // We need this for the camera bounds and for spatial querying sub-layers.
+                const ladGeoJSON = await fetchLADGeometry(laCode);
+                
+                if (!ladGeoJSON) throw new Error("Could not find Local Authority geometry.");
+
+                currentLADGeometry = ladGeoJSON.geometry;
+
+                // 2. Determine what to show
+                let displayGeoJSON = null;
+
+                if (type === 'lad') {
+                    // If user just wants the LA boundary, we already have it.
+                    displayGeoJSON = {
+                        type: "FeatureCollection",
+                        features: [ladGeoJSON]
+                    };
+                } else {
+                    // 3. Spatial Query for Sub-layers (Wards, LSOA, MSOA)
+                    // We use the LAD geometry to find features that intersect/are contained by it.
+                    // This is robust against code changes (e.g. LAD24 vs LAD21 codes).
+                    const targetUrl = type === 'ward' ? APIs.WARD : (type === 'lsoa' ? APIs.LSOA : APIs.MSOA);
+                    displayGeoJSON = await fetchSpatialQuery(targetUrl, currentLADGeometry);
+                }
+
+                // 4. Update Map
+                updateMapData(displayGeoJSON, type);
+                
+                // 5. Zoom to bounds
+                const bbox = turf.bbox(displayGeoJSON);
+                map.fitBounds(bbox, { padding: 40 });
+
+                status.textContent = `Loaded ${displayGeoJSON.features.length} features.`;
+
+            } catch (err) {
+                console.error(err);
+                status.innerHTML = `<span class="text-red-600">Error: ${err.message}</span>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Load Boundaries';
+            }
+        });
+
+        async function fetchLADGeometry(code) {
+            // Query by Attribute (LAD24CD)
+            const url = `${APIs.LAD}/query?where=LAD24CD='${code}'&outFields=*&returnGeometry=true&f=geojson`;
+            const res = await fetch(url);
+            const data = await res.json();
+            return data.features[0];
+        }
+
+        async function fetchSpatialQuery(serviceUrl, geometry) {
+            // ArcGIS REST API supports passing geometry for spatial filtering
+            // We must stringify the geometry for the URL parameter.
+            // Note: Complex geometries might hit URL length limits. 
+            // If the LA is huge, we might need to simplify, but usually Districts are fine for GET requests.
+            
+            // Use Turf to get the envelope (bounding box) for a lighter query first, 
+            // or pass the polygon geometry directly formatted for ArcGIS.
+            // ArcGIS expects geometryType=esriGeometryPolygon&geometry={...}
+            
+            // To be safe with URL length, we will use the bounding box (Envelope) of the LA 
+            // to fetch candidates, then filter strictly on client side if needed, 
+            // OR use the 'geometry' param if supported by the server via standard GeoJSON.
+            // ONS APIs support standard GeoJSON input in 'geometry' param usually, but let's be safe.
+            
+            // Strategy: Convert GeoJSON Polygon to ArcGIS Ring format is complex without a library.
+            // Simpler Strategy: Query by 'LAD24CD' attribute first (if available in target layer).
+            // If that fails (columns mismatch), we fallback to Bounding Box spatial query.
+            
+            // Let's try Attribute Query first (Faster & Safer for URL length)
+            // LSOA/MSOA/Ward layers usually have a parent code column.
+            // 2024 Wards have LAD24CD. 2021 LSOA have LAD22CD (usually).
+            // We will try a wildcard or flexible query if possible.
+            
+            // ACTUALLY: The most robust way for a generic app is:
+            // 1. Get bbox of LAD.
+            // 2. Request features within that bbox.
+            // 3. Client-side filter using Turf.intersect (optional, for precise clipping).
+            
+            const bbox = turf.bbox(currentLADGeometry);
+            const bboxString = `${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]}`;
+            
+            const url = `${serviceUrl}/query?geometry=${bboxString}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&inSR=4326&outFields=*&returnGeometry=true&f=geojson`;
+            
+            const res = await fetch(url);
+            const data = await res.json();
+            
+            // Optional: Client-side strict containment check to remove neighbors in the square bbox
+            // This ensures "clean" borders.
+            const cleanFeatures = data.features.filter(f => {
+                // Check if feature's centroid is inside the LAD polygon
+                const centroid = turf.centroid(f);
+                return turf.booleanPointInPolygon(centroid, currentLADGeometry);
+            });
+
+            return { type: "FeatureCollection", features: cleanFeatures };
+        }
+
+        function updateMapData(geojson, type) {
+            const sourceId = 'boundary-source';
+            const fillLayerId = 'boundary-fill';
+            const lineLayerId = 'boundary-line';
+
+            // Remove existing layers if they exist
+            if (map.getLayer(fillLayerId)) map.removeLayer(fillLayerId);
+            if (map.getLayer(lineLayerId)) map.removeLayer(lineLayerId);
+            if (map.getSource(sourceId)) map.removeSource(sourceId);
+
+            // Add Source
+            map.addSource(sourceId, {
+                type: 'geojson',
+                data: geojson
+            });
+
+            // Styling based on type
+            let fillColor = '#3b82f6'; // blue-500
+            let fillOpacity = 0.2;
+            
+            if (type === 'ward') { fillColor = '#10b981'; fillOpacity = 0.3; } // green
+            else if (type === 'lsoa') { fillColor = '#f59e0b'; fillOpacity = 0.4; } // amber
+            else if (type === 'msoa') { fillColor = '#8b5cf6'; fillOpacity = 0.3; } // purple
+
+            // Add Fill Layer
+            map.addLayer({
+                id: fillLayerId,
+                type: 'fill',
+                source: sourceId,
+                paint: {
+                    'fill-color': fillColor,
+                    'fill-opacity': fillOpacity
+                }
+            });
+
+            // Add Line Layer (Borders)
+            map.addLayer({
+                id: lineLayerId,
+                type: 'line',
+                source: sourceId,
+                paint: {
+                    'line-color': '#1e3a8a', // dark blue
+                    'line-width': type === 'lad' ? 3 : 1,
+                    'line-opacity': 0.8
+                }
+            });
+
+            // Popup logic
+            map.on('click', fillLayerId, (e) => {
+                const props = e.features[0].properties;
+                // Try to find a Name property (fields vary by layer: LAD24NM, WD24NM, LSOA21NM, etc.)
+                const name = props.LAD24NM || props.WD24NM || props.LSOA21NM || props.MSOA21NM || "Unknown";
+                const code = props.LAD24CD || props.WD24CD || props.LSOA21CD || props.MSOA21CD || "";
+                
+                new maplibregl.Popup()
+                    .setLngLat(e.lngLat)
+                    .setHTML(`
+                        <div class="p-2">
+                            <h3 class="font-bold">${name}</h3>
+                            <p class="text-sm text-gray-500">${code}</p>
+                            <p class="text-xs text-gray-400 mt-1 uppercase">${type}</p>
+                        </div>
+                    `)
+                    .addTo(map);
+            });
+
+            // Mouse cursor
+            map.on('mouseenter', fillLayerId, () => map.getCanvas().style.cursor = 'pointer');
+            map.on('mouseleave', fillLayerId, () => map.getCanvas().style.cursor = '');
+        }
+
+    </script>
+</body>
+</html>
