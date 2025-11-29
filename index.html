@@ -27,7 +27,7 @@
     <div class="sidebar absolute top-4 left-4 w-80 bg-white rounded-xl shadow-2xl flex flex-col p-5 border border-gray-200/50 backdrop-blur-sm bg-white/95">
         
         <h1 class="text-xl font-bold text-gray-800 mb-1">UK Boundaries</h1>
-        <p class="text-xs text-gray-500 mb-4">Data sourced dynamically from ONS Open Geography Portal</p>
+        <p class="text-xs text-gray-500 mb-4">Data sourced dynamically from ONS Open Geography Portal (2021/24 Census data)</p>
 
         <!-- Loading Indicator -->
         <div id="loading-initial" class="flex items-center space-x-2 text-blue-600 text-sm font-medium mb-4 animate-pulse">
@@ -41,14 +41,11 @@
         <!-- Controls Form -->
         <div id="controls" class="hidden space-y-4">
             
-            <!-- Local Authority Dropdown -->
+            <!-- Local Authority Search -->
             <div>
                 <label class="block text-sm font-semibold text-gray-700 mb-1">Local Authority</label>
-                <div class="relative">
-                    <select id="la-select" class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 bg-gray-50 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md border shadow-sm transition-colors">
-                        <option value="" disabled selected>Select a location...</option>
-                        <!-- Options populated via JS -->
-                    </select>
+                <div id="la-search-container" class="relative">
+                    <!-- Search input will be inserted here by search.js -->
                 </div>
             </div>
 
@@ -99,7 +96,12 @@
         </div>
     </div>
 
-    <!-- Main Application Script -->
+    <!-- Module Scripts (load in order) -->
+    <script src="js/config.js"></script>
+    <script src="js/map.js"></script>
+    <script src="js/search.js"></script>
+    <script src="js/boundaryLoader.js"></script>
+    <script src="js/mapLayers.js"></script>
     <script src="js/main.js"></script>
 </body>
 </html>

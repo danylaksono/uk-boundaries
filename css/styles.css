@@ -30,6 +30,26 @@ select::-webkit-scrollbar-thumb {
     border-radius: 4px;
 }
 
+/* Search results styling */
+#la-search-results {
+    scrollbar-width: thin;
+    scrollbar-color: #888 #f1f1f1;
+}
+
+#la-search-results::-webkit-scrollbar {
+    width: 8px;
+}
+
+#la-search-results::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+#la-search-results::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+
 /* Basemap Control Styling */
 .maplibregl-ctrl-select {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
