@@ -15,9 +15,11 @@ basemapControlInstance = basemapControl;
 
 // Make switchBasemap available globally for basemap control
 window.switchBasemap = (basemapKey) => {
-    switchBasemap(map, basemapControlInstance, basemapKey, currentGeoJSON, currentBoundaryType, (newControl) => {
-        basemapControlInstance = newControl;
-    });
+    if (window.switchBasemapFunction) {
+        window.switchBasemapFunction(map, basemapControlInstance, basemapKey, currentGeoJSON, currentBoundaryType, (newControl) => {
+            basemapControlInstance = newControl;
+        });
+    }
 };
 
 map.on('load', () => {

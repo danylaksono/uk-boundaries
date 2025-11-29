@@ -73,7 +73,8 @@ function updateMapData(map, geojson, type) {
 }
 
 // --- Basemap Switching ---
-function switchBasemap(map, basemapControlInstance, basemapKey, currentGeoJSON, currentBoundaryType, onBasemapControlUpdate) {
+// Expose switchBasemap globally so it can be called from main.js
+window.switchBasemapFunction = function switchBasemap(map, basemapControlInstance, basemapKey, currentGeoJSON, currentBoundaryType, onBasemapControlUpdate) {
     const basemap = basemaps[basemapKey];
     if (!basemap) return;
 
